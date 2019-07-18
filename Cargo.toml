@@ -1,0 +1,7 @@
+[package]
+name = "minecraftserver4"
+version = "0.1.0"
+authors = ["StackDoubleFlow <ojaslandge@gmail.com>"]
+edition = "2018"
+
+[dependencies]
