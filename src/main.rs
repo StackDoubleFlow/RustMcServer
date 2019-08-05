@@ -1,8 +1,10 @@
-mod server;
-mod packets;
 
+mod network;
+mod packets;
+mod utils;
+mod world;
 
 fn main() {
-    println!("Hello world");
-    server::run_server();
+    println!("Starting server");
+    network::start_server();
 }

@@ -5,3 +5,5 @@ authors = ["StackDoubleFlow <ojaslandge@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+openssl = "0.10.24"
+flate2 = "1.0"
