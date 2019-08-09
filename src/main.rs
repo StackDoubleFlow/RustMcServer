@@ -1,10 +1,9 @@
-
 mod network;
 mod packets;
 mod utils;
 mod world;
 
 fn main() {
-    println!("Starting server");
+    println!("Loading world...");
     network::start_server();
 }

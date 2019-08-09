@@ -26,12 +26,22 @@ type ByteArray = Vec<u8>;
 
 pub struct PacketDecoder {
     buffer: PacketBuffer,
+    pub packet_id: i32,
+    pub length: i32,
     i: usize,
 }
 
 impl PacketDecoder {
     pub fn new(buffer: PacketBuffer) -> PacketDecoder {
-        PacketDecoder { buffer, i: 0 }
+        let mut decoder = PacketDecoder {
+            buffer,
+            i: 0,
+            length: 0,
+            packet_id: 0,
+        };
+        decoder.length = decoder.read_varint();
+        decoder.packet_id = decoder.read_varint();
+        decoder
     }
 
     fn read_ubyte(&mut self) -> u8 {
@@ -279,7 +289,7 @@ impl C01EcryptionRequest {
 pub struct S00Request {}
 
 pub struct S01Ping {
-    payload: Long,
+    pub payload: Long,
 }
 
 impl S01Ping {
@@ -291,14 +301,14 @@ impl S01Ping {
 }
 
 pub struct S00Handshake {
-    protocol_version: VarInt,
-    server_address: String,
-    server_port: UnsignedShort,
-    next_state: NetworkState,
+    pub protocol_version: VarInt,
+    pub server_address: String,
+    pub server_port: UnsignedShort,
+    pub next_state: NetworkState,
 }
 
 impl S00Handshake {
-    pub fn decode(decoder: &mut PacketDecoder) -> S00Handshake {
+    pub fn decode(mut decoder: PacketDecoder) -> S00Handshake {
         S00Handshake {
             protocol_version: decoder.read_varint(),
             server_address: decoder.read_string(),

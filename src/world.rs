@@ -1,7 +1,3 @@
-pub struct World {
+pub struct World {}
 
-}
-
-pub fn load_world() {
-    
-}
+pub fn load_world() {}
