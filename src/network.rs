@@ -1,14 +1,13 @@
 extern crate openssl;
+use crate::packets::*;
+use crate::world::World;
+use openssl::rsa::{Padding, Rsa};
+use serde_json::json;
 use std::io::prelude::*;
-use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
-use openssl::rsa::{Padding, Rsa};
-
-use crate::packets::*;
-use crate::world::World;
 
 struct Connection {
     packets: Arc<Mutex<Vec<PacketBuffer>>>,
@@ -16,9 +15,9 @@ struct Connection {
 }
 
 impl Connection {
-    fn new(mut stream: TcpStream) -> Connection {
+    fn new(stream: TcpStream) -> Connection {
         println!("New connection!");
-        let mut reader = stream.try_clone().unwrap();
+        let reader = stream.try_clone().unwrap();
         let connection = Connection {
             packets: Arc::new(Mutex::new(Vec::new())),
             stream,
@@ -39,10 +38,22 @@ impl Connection {
             if length == 0 {
                 return;
             }
-            data.drain(0..length);
+            println!("Data length: {}", length);
+            data.drain(length..);
             data.shrink_to_fit();
+            //for i in 0..data.len() {
+            //    print!("{:x}", data[i]);
+            //}
+            //println!("");
             packets.lock().unwrap().push(data);
         }
+    }
+
+    fn receive_packets(&self) -> Vec<PacketBuffer> {
+        let mut packets = self.packets.lock().unwrap();
+        let out = packets.clone();
+        packets.clear();
+        out
     }
 }
 
@@ -59,6 +70,10 @@ impl Client {
             state: NetworkState::HANDSHAKING,
         }
     }
+
+    fn send_packet(&mut self, buffer: PacketBuffer) {
+        self.connection.stream.write(buffer.as_slice()).unwrap();
+    }
 }
 
 struct Server {
@@ -71,6 +86,7 @@ impl Server {
             clients: Arc::new(Mutex::new(Vec::new())),
         }
     }
+
     fn listen_for_connections(&self) {
         let clients = self.clients.clone();
         thread::spawn(move || {
@@ -78,42 +94,86 @@ impl Server {
             for stream in listener.incoming() {
                 let stream = stream.unwrap();
 
-                let mut client = Client::new(stream);
+                let client = Client::new(stream);
                 clients.lock().unwrap().push(client);
             }
         });
     }
 
-    fn handle_packet(
-        &mut self,
-        client: &Client,
-        clients: &MutexGuard<'_, std::vec::Vec<Client>>,
-        packet: PacketBuffer,
-    ) {
-        let decoder = PacketDecoder::new(packet);
-        println!("Packet received: {}", decoder.packet_id);
-        match client.state {
+    fn unknown_packet(id: i32) {
+        println!("Unknown packet with id: {}", id);
+    }
+
+    fn handle_packet(&mut self, client: usize, packet: PacketBuffer) {
+        let mut clients = self.clients.lock().unwrap();
+        let (decoder, other_packets) = PacketDecoder::new(packet);
+        println!(
+            "Packet received: {}, with the length of: {}",
+            decoder.packet_id, decoder.length
+        );
+        let state = clients[client].state;
+        if other_packets.is_some() {
+            clients[client]
+                .connection
+                .packets
+                .lock()
+                .unwrap()
+                .push(other_packets.unwrap());
+        }
+        match state {
             NetworkState::HANDSHAKING => match decoder.packet_id {
                 0x00 => {
                     let packet = S00Handshake::decode(decoder);
-                    client.state = packet.next_state;
+                    clients.get_mut(client).unwrap().state = packet.next_state;
                 }
-                _ => {
-                    println!("Unknown packet with id: {}", decoder.packet_id);
-                }
+                _ => Server::unknown_packet(decoder.packet_id),
             },
-            NetworkState::STATUS => {}
-            NetworkState::LOGIN => {}
-            NetworkState::PLAY => {}
+            NetworkState::STATUS => match decoder.packet_id {
+                0x00 => {
+                    let json_response = json!({
+                        "version": {
+                            "name": "1.14.4",
+                            "protocol": 498
+                        },
+                        "players": {
+                            "max": 100,
+                            "online": 0,
+                            "sample": [],
+                        },
+                        "description": {
+                            "text": "Hello World!"
+                        }
+                    })
+                    .to_string();
+                    println!("sending response: {}", json_response);
+                    let response_encoder = C00Response { json_response }.encode();
+                    clients[client].send_packet(response_encoder.finalize(false, None));
+                }
+                0x01 => {
+                    let packet = S01Ping::decode(decoder);
+                    let pong_encoder = C01Pong { payload: packet.payload }.encode();
+                    clients[client].send_packet(pong_encoder.finalize(false, None));
+                },
+                _ => Server::unknown_packet(decoder.packet_id),
+            },
+            NetworkState::LOGIN => match decoder.packet_id {
+                0x00 => {}
+                _ => Server::unknown_packet(decoder.packet_id),
+            },
+            NetworkState::PLAY => match decoder.packet_id {
+                _ => Server::unknown_packet(decoder.packet_id),
+            },
         }
     }
 
     fn check_incoming_packets(&mut self) {
-        let clients = self.clients.lock().unwrap();
-        for client in clients.iter() {
-            let mut packets = client.connection.packets.lock().unwrap();
+        let num_clients = self.clients.lock().unwrap().len();
+        for client in 0..num_clients {
+            let mut packets = self.clients.lock().unwrap()[client]
+                .connection
+                .receive_packets();
             for packet in packets.drain(..) {
-                self.handle_packet(client, &clients, packet);
+                self.handle_packet(client, packet);
             }
         }
     }
@@ -129,6 +189,6 @@ impl Server {
 
 pub fn start_server() {
     println!("Starting server...");
-    let mut server = Server::new();
+    let server = Server::new();
     server.start();
 }

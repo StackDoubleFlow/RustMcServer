@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+#[derive(Copy, Clone)]
 pub enum NetworkState {
     HANDSHAKING,
     STATUS,
@@ -32,16 +33,36 @@ pub struct PacketDecoder {
 }
 
 impl PacketDecoder {
-    pub fn new(buffer: PacketBuffer) -> PacketDecoder {
+    pub fn new(buffer: PacketBuffer) -> (PacketDecoder, Option<PacketBuffer>) {
         let mut decoder = PacketDecoder {
             buffer,
             i: 0,
             length: 0,
             packet_id: 0,
         };
+        for i in 0..decoder.buffer.len() {
+            print!("{:x}", decoder.buffer[i]);
+        }
+        println!("");
         decoder.length = decoder.read_varint();
+        let old_i = decoder.i;
         decoder.packet_id = decoder.read_varint();
-        decoder
+        let packet_id_length = decoder.i - old_i;
+        if (decoder.length + old_i as i32) < decoder.buffer.len() as i32 {
+            let buffer_clone = decoder.buffer.clone();
+
+            let (new_buffer, other_packets) =
+                buffer_clone.split_at(decoder.length as usize + decoder.i - packet_id_length);
+            println!(
+                "Packet split into {} and {}",
+                new_buffer.len(),
+                other_packets.len()
+            );
+            decoder.buffer = Vec::from(new_buffer);
+            (decoder, Some(Vec::from(other_packets)))
+        } else {
+            (decoder, None)
+        }
     }
 
     fn read_ubyte(&mut self) -> u8 {
@@ -88,16 +109,16 @@ impl PacketDecoder {
     }
 
     fn read_varint(&mut self) -> i32 {
-        let mut numRead = 0;
+        let mut num_read = 0;
         let mut result = 0i32;
         let mut read;
         loop {
             read = self.read_byte() as u8;
             let value = (read & 0b01111111) as i32;
-            result |= value << (7 * numRead);
+            result |= value << (7 * num_read);
 
-            numRead += 1;
-            if numRead > 5 {
+            num_read += 1;
+            if num_read > 5 {
                 panic!("VarInt is too big!");
             }
             if read & 0b10000000 == 0 {
@@ -108,16 +129,16 @@ impl PacketDecoder {
     }
 
     fn read_varlong(&mut self) -> i64 {
-        let mut numRead = 0;
+        let mut num_read = 0;
         let mut result = 0i64;
         let mut read;
         loop {
             read = self.read_byte() as u8;
             let value = (read & 0b01111111) as i64;
-            result |= value << (7 * numRead);
+            result |= value << (7 * num_read);
 
-            numRead += 1;
-            if numRead > 5 {
+            num_read += 1;
+            if num_read > 5 {
                 panic!("VarInt is too big!");
             }
             if read & 0b10000000 == 0 {
@@ -141,7 +162,7 @@ impl PacketDecoder {
     }
 }
 
-struct PacketEncoder {
+pub struct PacketEncoder {
     buffer: PacketBuffer,
     packet_id: u8,
 }
@@ -154,8 +175,27 @@ impl PacketEncoder {
         }
     }
 
-    fn finalize(&self, _compressed: bool, _encryption_key: Option<Vec<u8>>) -> Vec<u8> {
-        self.buffer.clone()
+    pub fn finalize(self, compressed: bool, encryption_key: Option<Vec<u8>>) -> Vec<u8> {
+        let mut dummy_encoder = PacketEncoder::new(0);
+        let mut out;
+
+        if compressed {
+            out = vec![];
+        } else {
+            let mut packet_id_encoder = PacketEncoder::new(0);
+            packet_id_encoder.write_varint(self.packet_id as i32);
+            dummy_encoder
+                .write_varint(self.buffer.len() as i32 + packet_id_encoder.buffer.len() as i32);
+            out = dummy_encoder.buffer.clone();
+            out.append(&mut packet_id_encoder.buffer.clone());
+            out.append(&mut self.buffer.clone());
+        }
+
+        if encryption_key.is_some() {
+            out
+        } else {
+            out
+        }
     }
 
     fn write_ubyte(&mut self, byte: u8) {
@@ -229,7 +269,7 @@ impl PacketEncoder {
 // CLIENT BOUND
 
 pub struct C00Response {
-    json_response: String,
+    pub json_response: String,
 }
 
 impl C00Response {
@@ -241,19 +281,19 @@ impl C00Response {
 }
 
 pub struct C01Pong {
-    payload: Long,
+    pub payload: Long,
 }
 
 impl C01Pong {
-    pub fn encode(self, payload: Long) -> PacketEncoder {
+    pub fn encode(self) -> PacketEncoder {
         let mut encoder = PacketEncoder::new(0x01);
-        encoder.write_long(payload);
+        encoder.write_long(self.payload);
         encoder
     }
 }
 
 pub struct C00Disconnect {
-    reason: Chat,
+    pub reason: Chat,
 }
 
 impl C00Disconnect {
@@ -265,11 +305,11 @@ impl C00Disconnect {
 }
 
 pub struct C01EcryptionRequest {
-    server_id: String,
-    public_key_length: VarInt,
-    public_key: ByteArray,
-    verify_token_length: VarInt,
-    verify_token: ByteArray,
+    pub server_id: String,
+    pub public_key_length: VarInt,
+    pub public_key: ByteArray,
+    pub verify_token_length: VarInt,
+    pub verify_token: ByteArray,
 }
 
 impl C01EcryptionRequest {
@@ -286,14 +326,12 @@ impl C01EcryptionRequest {
 
 // SERVER BOUND
 
-pub struct S00Request {}
-
 pub struct S01Ping {
     pub payload: Long,
 }
 
 impl S01Ping {
-    pub fn decode(decoder: &mut PacketDecoder) -> S01Ping {
+    pub fn decode(mut decoder: PacketDecoder) -> S01Ping {
         S01Ping {
             payload: decoder.read_long(),
         }
@@ -313,10 +351,16 @@ impl S00Handshake {
             protocol_version: decoder.read_varint(),
             server_address: decoder.read_string(),
             server_port: decoder.read_ushort(),
-            next_state: match decoder.read_varint() {
-                1 => NetworkState::STATUS,
-                2 => NetworkState::LOGIN,
-                _ => panic!("Invalid next network state"),
+            next_state: {
+                let next_state = decoder.read_varint();
+                match next_state {
+                    1 => NetworkState::STATUS,
+                    2 => NetworkState::LOGIN,
+                    _ => {
+                        println!("Invalid next network state: {}", next_state);
+                        NetworkState::HANDSHAKING
+                    }
+                }
             },
         }
     }
