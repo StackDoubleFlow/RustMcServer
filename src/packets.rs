@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use crate::network::Client;
 
 #[derive(Copy, Clone)]
 pub enum NetworkState {
@@ -33,31 +34,31 @@ pub struct PacketDecoder {
 }
 
 impl PacketDecoder {
-    pub fn new(buffer: PacketBuffer) -> (PacketDecoder, Option<PacketBuffer>) {
+    pub fn new(buffer: PacketBuffer, client: &Client) -> (PacketDecoder, Option<PacketBuffer>) {
         let mut decoder = PacketDecoder {
             buffer,
             i: 0,
             length: 0,
             packet_id: 0,
         };
-        for i in 0..decoder.buffer.len() {
+        /*for i in 0..decoder.buffer.len() {
             print!("{:x}", decoder.buffer[i]);
         }
-        println!("");
-        decoder.length = decoder.read_varint();
-        let old_i = decoder.i;
-        decoder.packet_id = decoder.read_varint();
-        let packet_id_length = decoder.i - old_i;
-        if (decoder.length + old_i as i32) < decoder.buffer.len() as i32 {
-            let buffer_clone = decoder.buffer.clone();
+        println!("");*/
+        if client.shared_secret.is_some() {
+            println!("im a poopy head"); // yes
+        }
 
+        decoder.length = decoder.read_varint();
+        let length_of_length = decoder.i;
+
+        decoder.packet_id = decoder.read_varint();
+        let packet_id_length = decoder.i - length_of_length;
+        
+        if (decoder.buffer.len() - length_of_length) > decoder.length as usize {
+            let buffer_clone = decoder.buffer.clone();
             let (new_buffer, other_packets) =
                 buffer_clone.split_at(decoder.length as usize + decoder.i - packet_id_length);
-            println!(
-                "Packet split into {} and {}",
-                new_buffer.len(),
-                other_packets.len()
-            );
             decoder.buffer = Vec::from(new_buffer);
             (decoder, Some(Vec::from(other_packets)))
         } else {
@@ -175,7 +176,7 @@ impl PacketEncoder {
         }
     }
 
-    pub fn finalize(self, compressed: bool, encryption_key: Option<Vec<u8>>) -> Vec<u8> {
+    pub fn finalize(self, compressed: bool, encryption_key: &Option<Vec<u8>>) -> Vec<u8> {
         let mut dummy_encoder = PacketEncoder::new(0);
         let mut out;
 
@@ -362,6 +363,37 @@ impl S00Handshake {
                     }
                 }
             },
+        }
+    }
+}
+
+pub struct S00LoginStart {
+    pub name: String,
+}
+
+impl S00LoginStart {
+    pub fn decode(mut decoder: PacketDecoder) -> S00LoginStart {
+        S00LoginStart {
+            name: decoder.read_string(),
+        }
+    }
+}
+
+pub struct S01EncryptionResponse {
+    pub shared_secret_length: VarInt,
+    pub shared_secret: ByteArray,
+    pub verify_token_length: VarInt,
+    pub verify_token: ByteArray
+}
+
+impl S01EncryptionResponse {
+    pub fn decode(mut decoder: PacketDecoder) -> S01EncryptionResponse {
+        let shared_secret_length = decoder.read_varint();
+        let shared_secret = decoder.read_bytes(shared_secret_length.clone() as usize);
+        let verify_token_length = decoder.read_varint();
+        let verify_token = decoder.read_bytes(verify_token_length.clone() as usize);
+        S01EncryptionResponse {
+            shared_secret_length, shared_secret, verify_token_length,verify_token
         }
     }
 }
