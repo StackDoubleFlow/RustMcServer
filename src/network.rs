@@ -263,7 +263,6 @@ impl Server {
 
 pub fn start_server() {
     println!("Starting server...");
-    println!("{}", utils::mc_hex_digest("jeb_"));
     let server = Server::new();
     server.start();
 }

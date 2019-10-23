@@ -1,4 +1,5 @@
 use crate::world::World;
+use openssl::sha::Sha1;
 use serde_json::Map;
 
 pub struct Vec3 {
@@ -19,12 +20,11 @@ pub struct Location {
     z: i32,
     pitch: i8,
     yaw: i8,
-    world: World,
 }
 
 impl Location {
-    fn new(x: i32, y: i32, z: i32, pitch: i8, yaw: i8, world: World) -> Self {
-        Self { x, y, z, pitch, yaw, world }
+    pub fn new(x: i32, y: i32, z: i32, pitch: i8, yaw: i8) -> Self {
+        Self { x, y, z, pitch, yaw }
     }
 }
 
@@ -53,5 +53,34 @@ impl ChatComponent {
 
     pub fn build() -> Option<Map<String, bool>> {
         return None;
+    }
+}
+
+pub fn to_hex_string(bytes: Vec<u8>) -> String {
+    let strs: Vec<String> = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    strs.join("")
+}
+
+fn mc_twos_comp(bytes: &mut Vec<u8>) {
+    let mut carry = true;
+    for i in (0..bytes.len()).rev() {
+        bytes[i] = !bytes[i] & 0xff;
+        if carry {
+            carry = bytes[i] == 0xff;
+            bytes[i] += 1;
+        }
+    }
+}
+
+pub fn mc_hex_digest(name: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(name.as_bytes());
+    let mut bytes = hasher.finish().to_vec();
+    let negative = (bytes[0] & 0x80) == 0x80;
+    if negative {
+        mc_twos_comp(&mut bytes);
+        format!("-{}", String::from(to_hex_string(bytes).trim_start_matches("0")))
+    } else {
+        String::from(to_hex_string(bytes).trim_start_matches("0"))
     }
 }
