@@ -1,3 +1,4 @@
+use crate::network::Client;
 use std::convert::TryInto;
 use crate::network::Client;
 
@@ -54,7 +55,7 @@ impl PacketDecoder {
 
         decoder.packet_id = decoder.read_varint();
         let packet_id_length = decoder.i - length_of_length;
-        
+
         if (decoder.buffer.len() - length_of_length) > decoder.length as usize {
             let buffer_clone = decoder.buffer.clone();
             let (new_buffer, other_packets) =
@@ -363,37 +364,6 @@ impl S00Handshake {
                     }
                 }
             },
-        }
-    }
-}
-
-pub struct S00LoginStart {
-    pub name: String,
-}
-
-impl S00LoginStart {
-    pub fn decode(mut decoder: PacketDecoder) -> S00LoginStart {
-        S00LoginStart {
-            name: decoder.read_string(),
-        }
-    }
-}
-
-pub struct S01EncryptionResponse {
-    pub shared_secret_length: VarInt,
-    pub shared_secret: ByteArray,
-    pub verify_token_length: VarInt,
-    pub verify_token: ByteArray
-}
-
-impl S01EncryptionResponse {
-    pub fn decode(mut decoder: PacketDecoder) -> S01EncryptionResponse {
-        let shared_secret_length = decoder.read_varint();
-        let shared_secret = decoder.read_bytes(shared_secret_length.clone() as usize);
-        let verify_token_length = decoder.read_varint();
-        let verify_token = decoder.read_bytes(verify_token_length.clone() as usize);
-        S01EncryptionResponse {
-            shared_secret_length, shared_secret, verify_token_length,verify_token
         }
     }
 }

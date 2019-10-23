@@ -1,18 +1,20 @@
 extern crate openssl;
 extern crate rand;
+extern crate reqwest;
 use crate::packets::*;
 use crate::player::Player;
 use crate::world::World;
+use crate::utils;
 use openssl::pkey::Private;
 use openssl::rsa::{Padding, Rsa};
-use serde_json::json;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Result};
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::{thread, time};
-
-
+use std::format;
 
 struct Connection {
     packets: Arc<Mutex<Vec<PacketBuffer>>>,
@@ -64,6 +66,7 @@ pub struct Client {
     pub compressed: bool,
     verify_token: Option<Vec<u8>>,
     player: Option<Player>,
+    username: Option<String>
 }
 
 impl Client {
@@ -76,6 +79,7 @@ impl Client {
             compressed: false,
             verify_token: None,
             player: None,
+            username: None
         }
     }
 
@@ -83,6 +87,20 @@ impl Client {
         let buffer = encoder.finalize(self.compressed, &self.shared_secret);
         self.connection.stream.write(buffer.as_slice()).unwrap();
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct MojangHasJoinedResponseProperties {
+    name: String,
+    value: String,
+    signature: String
+}
+
+#[derive(Serialize, Deserialize)]
+struct MojangHasJoinedResponse {
+    id: String,
+    name: String,
+    properties: Vec<MojangHasJoinedResponseProperties>
 }
 
 struct Server {
@@ -183,26 +201,35 @@ impl Server {
                         public_key,
                         verify_token_length: 4,
                         verify_token: verify_token.clone(),
-                    }.encode();
+                    }
+                    .encode();
                     clients[client].verify_token = Some(verify_token);
+                    clients[client].username = Some(packet.name);
                     clients[client].send_packet(request_encoder);
-                    println!("{}", packet.name);
                 }
                 0x01 => {
                     let packet = S01EncryptionResponse::decode(decoder);
-                    let mut received_verify_token = vec![0u8; self.key_pair.size() as usize];
-                    let length = self.key_pair.private_decrypt(packet.verify_token.as_slice(), received_verify_token.as_mut(), Padding::PKCS1).unwrap();
-                    received_verify_token.drain(length..received_verify_token.len());
+                    let mut received_verify_token = vec![0u8; packet.verify_token_length as usize];
+
+                    let length_decrypted = self.key_pair
+                        .private_decrypt(
+                            packet.verify_token.as_slice(),
+                            received_verify_token.as_mut(),
+                            Padding::PKCS1,
+                        )
+                        .unwrap();
+                    received_verify_token.drain(length_decrypted..received_verify_token.len());
                     if &received_verify_token == clients[client].verify_token.as_ref().unwrap() {
+                        // Start login process
+                        let url = format!("https://sessionserver.mojang.com/session/minecraft/hasJoined?username={}&serverId={}",
+                            clients[client].username.as_ref().unwrap(),
+                            utils::mc_hex_digest(clients[client].username.as_ref().unwrap())
+                        );
+                        let mut mojang_res = reqwest::get(&url).unwrap();
+                        let decoded_res : MojangHasJoinedResponse = serde_json::from_str(&mojang_res.text().unwrap()).unwrap();
+                        
                     } else {
-                        for i in 0..4 {
-                            print!("{:x}", clients[client].verify_token.as_ref().unwrap()[i]);
-                        }
-                        println!("");
-                        for i in 0..received_verify_token.len() {
-                            print!("{:x}", received_verify_token[i]);
-                        }
-                        println!("");
+                        println!("Verify token incorrent!!");
                     }
                 }
                 _ => Server::unknown_packet(decoder.packet_id),
@@ -236,6 +263,7 @@ impl Server {
 
 pub fn start_server() {
     println!("Starting server...");
+    println!("{}", utils::mc_hex_digest("jeb_"));
     let server = Server::new();
     server.start();
 }

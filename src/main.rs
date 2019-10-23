@@ -1,5 +1,6 @@
 mod network;
 mod packets;
+mod player;
 mod utils;
 mod world;
 mod player;
