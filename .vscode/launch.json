@@ -14,6 +14,14 @@
             "cwd": "${workspaceRoot}",
             "environment": [],
             "externalConsole": true
+        },
+        {
+            "name": "(Linux) Launch",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceRoot}/target/debug/rustmcserver.exe",
+            "args": [],
+            "cwd": "${workspaceRoot}",
         }
     ]
 }
