@@ -1,3 +1,4 @@
+mod mojang;
 mod network;
 mod packets;
 mod player;

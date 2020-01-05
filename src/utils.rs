@@ -24,7 +24,13 @@ pub struct Location {
 
 impl Location {
     pub fn new(x: i32, y: i32, z: i32, pitch: i8, yaw: i8) -> Self {
-        Self { x, y, z, pitch, yaw }
+        Self {
+            x,
+            y,
+            z,
+            pitch,
+            yaw,
+        }
     }
 }
 
@@ -40,14 +46,14 @@ pub struct ChatComponent {
 
 impl ChatComponent {
     fn new(text: String) -> Self {
-        Self { 
-            text, 
-            children: Vec::new(), 
-            color: "none".to_string(), 
-            bold: false, 
-            underline: false, 
-            italics: false, 
-            obfuscated: false 
+        Self {
+            text,
+            children: Vec::new(),
+            color: "none".to_string(),
+            bold: false,
+            underline: false,
+            italics: false,
+            obfuscated: false,
         }
     }
 
@@ -79,7 +85,10 @@ pub fn mc_hex_digest(name: &str) -> String {
     let negative = (bytes[0] & 0x80) == 0x80;
     if negative {
         mc_twos_comp(&mut bytes);
-        format!("-{}", String::from(to_hex_string(bytes).trim_start_matches("0")))
+        format!(
+            "-{}",
+            String::from(to_hex_string(bytes).trim_start_matches("0"))
+        )
     } else {
         String::from(to_hex_string(bytes).trim_start_matches("0"))
     }

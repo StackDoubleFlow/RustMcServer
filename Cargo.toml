@@ -5,13 +5,14 @@ authors = ["StackDoubleFlow <ojaslandge@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+serde = { version = "1.0.104", features = ["derive"] }
 openssl = "0.10.26"
 flate2 = "1.0"
 base64 = "0.11.0"
-serde = "1.0.103"
 serde_json = "1.0.44"
 rand = "0.7.2"
-reqwest = "0.9.24"
+reqwest = "0.10.0"
+futures = "0.3.1"
 
 [profile.dev]
 opt-level = 0

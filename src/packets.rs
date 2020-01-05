@@ -383,7 +383,7 @@ pub struct S01EncryptionResponse {
     pub shared_secret_length: VarInt,
     pub shared_secret: ByteArray,
     pub verify_token_length: VarInt,
-    pub verify_token: ByteArray
+    pub verify_token: ByteArray,
 }
 
 impl S01EncryptionResponse {
@@ -393,7 +393,10 @@ impl S01EncryptionResponse {
         let verify_token_length = decoder.read_varint();
         let verify_token = decoder.read_bytes(verify_token_length.clone() as usize);
         S01EncryptionResponse {
-            shared_secret_length, shared_secret, verify_token_length,verify_token
+            shared_secret_length,
+            shared_secret,
+            verify_token_length,
+            verify_token,
         }
     }
 }

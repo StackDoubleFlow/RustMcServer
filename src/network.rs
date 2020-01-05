@@ -1,20 +1,18 @@
 extern crate openssl;
 extern crate rand;
 extern crate reqwest;
+use crate::mojang::Mojang;
 use crate::packets::*;
 use crate::player::Player;
-use crate::world::World;
-use crate::utils;
 use openssl::pkey::Private;
 use openssl::rsa::{Padding, Rsa};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Result};
+use serde_json::json;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::{thread, time};
-use std::format;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::thread::yield_now;
 
 struct Connection {
     packets: Arc<Mutex<Vec<PacketBuffer>>>,
@@ -30,10 +28,8 @@ impl Connection {
             stream,
         };
 
-        let packets_clone = connection.packets.clone();
-
         thread::spawn(|| {
-            Connection::handle_connection(reader, packets_clone);
+            Connection::handle_connection(reader, connection.packets.clone());
         });
         connection
     }
@@ -66,11 +62,12 @@ pub struct Client {
     pub compressed: bool,
     verify_token: Option<Vec<u8>>,
     player: Option<Player>,
-    username: Option<String>
+    username: Option<String>,
+    id: u32,
 }
 
 impl Client {
-    fn new(stream: TcpStream) -> Client {
+    fn new(stream: TcpStream, id: u32) -> Client {
         let connection = Connection::new(stream);
         Client {
             connection,
@@ -79,7 +76,8 @@ impl Client {
             compressed: false,
             verify_token: None,
             player: None,
-            username: None
+            username: None,
+            id,
         }
     }
 
@@ -89,23 +87,10 @@ impl Client {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct MojangHasJoinedResponseProperties {
-    name: String,
-    value: String,
-    signature: String
-}
-
-#[derive(Serialize, Deserialize)]
-struct MojangHasJoinedResponse {
-    id: String,
-    name: String,
-    properties: Vec<MojangHasJoinedResponseProperties>
-}
-
 struct Server {
     clients: Arc<Mutex<Vec<Client>>>,
     key_pair: Rsa<Private>,
+    mojang: Mojang,
 }
 
 impl Server {
@@ -115,18 +100,21 @@ impl Server {
         Server {
             clients: Arc::new(Mutex::new(Vec::new())),
             key_pair: rsa,
+            mojang: Mojang::new(),
         }
     }
 
     fn listen_for_connections(&self) {
         let clients = self.clients.clone();
+        let mut nextId = 0;
         thread::spawn(move || {
             let listener = TcpListener::bind("0.0.0.0:25566").unwrap();
             for stream in listener.incoming() {
                 let stream = stream.unwrap();
 
-                let client = Client::new(stream);
+                let client = Client::new(stream, nextId);
                 clients.lock().unwrap().push(client);
+                nextId += 1;
             }
         });
     }
@@ -211,7 +199,8 @@ impl Server {
                     let packet = S01EncryptionResponse::decode(decoder);
                     let mut received_verify_token = vec![0u8; packet.verify_token_length as usize];
 
-                    let length_decrypted = self.key_pair
+                    let length_decrypted = self
+                        .key_pair
                         .private_decrypt(
                             packet.verify_token.as_slice(),
                             received_verify_token.as_mut(),
@@ -221,13 +210,8 @@ impl Server {
                     received_verify_token.drain(length_decrypted..received_verify_token.len());
                     if &received_verify_token == clients[client].verify_token.as_ref().unwrap() {
                         // Start login process
-                        let url = format!("https://sessionserver.mojang.com/session/minecraft/hasJoined?username={}&serverId={}",
-                            clients[client].username.as_ref().unwrap(),
-                            utils::mc_hex_digest(clients[client].username.as_ref().unwrap())
-                        );
-                        let mut mojang_res = reqwest::get(&url).unwrap();
-                        let decoded_res : MojangHasJoinedResponse = serde_json::from_str(&mojang_res.text().unwrap()).unwrap();
-                        
+                        self.mojang
+                            .sendHasJoined(clients[client].username.unwrap(), clients[client].id);
                     } else {
                         println!("Verify token incorrent!!");
                     }
@@ -252,10 +236,15 @@ impl Server {
         }
     }
 
+    fn poll_mojang(&self) {
+        self.mojang.poll();
+    }
+
     fn start(mut self) {
         self.listen_for_connections();
         loop {
-            thread::sleep(time::Duration::from_millis(5));
+            yield_now();
+            self.poll_mojang();
             self.check_incoming_packets();
         }
     }
