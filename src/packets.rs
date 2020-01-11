@@ -1,7 +1,7 @@
 use crate::network::Client;
 use std::convert::TryInto;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum NetworkState {
     HANDSHAKING,
     STATUS,
@@ -27,43 +27,65 @@ type UUID = u128;
 type ByteArray = Vec<u8>;
 
 pub struct PacketDecoder {
-    buffer: PacketBuffer,
+    pub buffer: PacketBuffer,
     pub packet_id: i32,
     pub length: i32,
     i: usize,
 }
 
 impl PacketDecoder {
-    pub fn new(buffer: PacketBuffer, client: &Client) -> (PacketDecoder, Option<PacketBuffer>) {
+    pub fn newBatch(buffer: PacketBuffer, client: &Client) -> Vec<PacketDecoder> {
+        let mut decoders = Vec::new();
+        let mut next = buffer;
+        loop {
+            if client.shared_secret.is_some() {
+                // TODO: Protocol Encryption
+            }
+            let mut decoder = PacketDecoder {
+                buffer: next,
+                i: 0,
+                length: 0,
+                packet_id: 0,
+            };
+            decoder.length = decoder.read_varint();
+            let length_of_length = decoder.i;
+
+            decoder.packet_id = decoder.read_varint();
+            let packet_id_length = decoder.i - length_of_length;
+
+            if (decoder.buffer.len() - length_of_length) > decoder.length as usize {
+                let buffer_clone = decoder.buffer.clone();
+                let (new_buffer, other_packets) =
+                    buffer_clone.split_at(decoder.length as usize + decoder.i - packet_id_length);
+                decoder.buffer = Vec::from(new_buffer);
+                decoders.push(decoder);
+                next = other_packets.to_vec();
+            } else {
+                decoders.push(decoder);
+                break;
+            }
+        }
+        decoders
+    }
+
+    pub fn new(buffer: PacketBuffer, client: &Client) -> PacketDecoder {
         let mut decoder = PacketDecoder {
             buffer,
             i: 0,
             length: 0,
             packet_id: 0,
         };
-        /*for i in 0..decoder.buffer.len() {
-            print!("{:x}", decoder.buffer[i]);
-        }
-        println!("");*/
-        if client.shared_secret.is_some() {
-            println!("im a poopy head"); // yes
-        }
 
         decoder.length = decoder.read_varint();
-        let length_of_length = decoder.i;
 
+        // TODO: compression
         decoder.packet_id = decoder.read_varint();
-        let packet_id_length = decoder.i - length_of_length;
 
-        if (decoder.buffer.len() - length_of_length) > decoder.length as usize {
-            let buffer_clone = decoder.buffer.clone();
-            let (new_buffer, other_packets) =
-                buffer_clone.split_at(decoder.length as usize + decoder.i - packet_id_length);
-            decoder.buffer = Vec::from(new_buffer);
-            (decoder, Some(Vec::from(other_packets)))
-        } else {
-            (decoder, None)
+        if client.shared_secret.is_some() {
+            // TODO: Protocol Encryption
         }
+
+        decoder
     }
 
     fn read_ubyte(&mut self) -> u8 {
@@ -354,6 +376,7 @@ impl S00Handshake {
             server_port: decoder.read_ushort(),
             next_state: {
                 let next_state = decoder.read_varint();
+
                 match next_state {
                     1 => NetworkState::STATUS,
                     2 => NetworkState::LOGIN,

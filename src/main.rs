@@ -1,3 +1,4 @@
+mod chat;
 mod mojang;
 mod network;
 mod packets;

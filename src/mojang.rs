@@ -2,7 +2,24 @@ use crate::utils::mc_hex_digest;
 use futures::{Future, FutureExt};
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt;
 use std::pin::Pin;
+
+type MojangResult<T> = std::result::Result<T, MojangError>;
+
+#[derive(Debug)]
+pub enum MojangError {
+    ConnectionError,
+}
+
+impl fmt::Display for MojangError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "") // TODO: Error Message
+    }
+}
+
+impl Error for MojangError {}
 
 #[derive(Serialize, Deserialize)]
 pub struct MojangHasJoinedResponseProperties {
@@ -24,42 +41,42 @@ enum RequestType {
 
 type ReqwestFuture = Pin<Box<dyn Future<Output = Result<Response, reqwest::Error>>>>;
 
-struct Pending {
-    clientId: u32,
+pub struct Pending<R> {
+    pub clientId: u32,
     requestType: RequestType,
     future: ReqwestFuture,
+    pub result: Option<R>,
 }
 
-impl Pending {
-    fn new(clientId: u32, future: ReqwestFuture, requestType: RequestType) -> Pending {
+impl<R> Pending<R> {
+    fn new(clientId: u32, future: ReqwestFuture, requestType: RequestType) -> Pending<R> {
         Pending {
             clientId,
             future,
             requestType,
+            result: None,
         }
     }
 
-    fn poll(&self) {
-        self.future.as_mut().poll();
+    async fn run(&mut self) {
+        //self.future.await;
     }
 }
 
 pub struct Mojang {
     reqClient: reqwest::Client,
-    pendecies: Vec<Pending>,
+    pub hasJoinedPending: Vec<Pending<MojangHasJoinedResponse>>,
 }
 
 impl Mojang {
-    pub fn new() -> Mojang {
+    pub fn new() -> Self {
         Mojang {
             reqClient: reqwest::Client::new(),
-            pendecies: Vec::new(),
+            hasJoinedPending: Vec::new(),
         }
     }
 
-    pub fn poll(&self) {}
-
-    pub fn sendHasJoined(&mut self, username: String, clientId: u32) {
+    pub fn send_has_joined(&mut self, username: &String, clientId: u32) {
         let url = format!(
             "https://sessionserver.mojang.com/session/minecraft/hasJoined?username={}&serverId={}",
             username,
@@ -67,8 +84,11 @@ impl Mojang {
         );
 
         let future = self.reqClient.get(&url).send();
-        future.poll();
-        let pending = Pending::new(clientId, future, RequestType::HasJoined);
-        self.pendecies.push(pending);
+        let pending = Pending::new(clientId, future.boxed(), RequestType::HasJoined);
+        self.hasJoinedPending.push(pending);
+    }
+
+    pub fn clean(&mut self) {
+        self.hasJoinedPending.retain(|p| p.result.is_some());
     }
 }
