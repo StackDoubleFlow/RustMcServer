@@ -1,7 +1,7 @@
 extern crate openssl;
 extern crate rand;
 extern crate reqwest;
-use crate::mojang;
+use crate::utils;
 use crate::mojang::{Mojang, MojangHasJoinedResponse};
 use crate::packets::*;
 use crate::player::Player;
@@ -13,9 +13,8 @@ use serde_json::json;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::thread::yield_now;
+use std::time::{Duration};
 
 struct Connection {
     packet_receiver: mpsc::Receiver<PacketBuffer>,
@@ -45,10 +44,12 @@ impl Connection {
             let mut data = vec![0u8; 512];
             let length = stream.read(&mut data).unwrap();
             if length == 0 {
+                thread::sleep(Duration::from_millis(2));
                 continue;
             }
+            data.drain(length..);
             data.shrink_to_fit();
-            packet_sender.send(data);
+            packet_sender.send(data).unwrap();
         }
     }
 
@@ -93,7 +94,7 @@ impl Client {
         }
     }
 
-    fn send_packet(&mut self, encoder: PacketEncoder) {
+    fn send_packet(&mut self, encoder: &PacketEncoder) {
         let buffer = encoder.finalize(self.compressed, &self.shared_secret);
         self.connection.stream.write(buffer.as_slice()).unwrap();
     }
@@ -101,7 +102,7 @@ impl Client {
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerConfig {
-    maxPlayers: i32,
+    max_players: i32,
     motd: String,
 }
 
@@ -126,8 +127,8 @@ impl Server {
         server
     }
 
-    fn get_client(&self, clientId: u32) -> &Client {
-        self.clients.iter().filter(|client| client.id == clientId).collect::<Vec<&Client>>()[0]
+    fn get_client(&self, client_id: u32) -> &Client {
+        self.clients.iter().filter(|client| client.id == client_id).collect::<Vec<&Client>>()[0]
     }
 
     fn listen_for_connections(&self, sender: mpsc::Sender<Client>) {
@@ -149,39 +150,19 @@ impl Server {
     }
 
     fn handle_packet(&mut self, client: usize, packet: PacketBuffer) {
-        let decoder = PacketDecoder::new(packet, &self.clients[client]);
+        let client = self.clients.get_mut(client).unwrap();
+        let decoder = PacketDecoder::new(packet, client);
         println!(
             "Packet received: {}, with the length of: {}",
             decoder.packet_id, decoder.length
         );
-        let state = self.clients[client].state;
+        let state = client.state;
         match state {
             NetworkState::HANDSHAKING => match decoder.packet_id {
                 0x00 => {
                     let packet = S00Handshake::decode(decoder);
                     println!("New state: {:#?}", packet.next_state);
-                    self.clients.get_mut(client).unwrap().state = packet.next_state;
-
-                    if packet.next_state == NetworkState::STATUS {
-                        let json_response = json!({
-                            "version": {
-                                "name": "RustMC 1.15.1",
-                                "protocol": 575
-                            },
-                            "players": {
-                                "max": 100,
-                                "online": 1,
-                                "sample": [],
-                            },
-                            "description": {
-                                "text": "Hello World!",
-                                "color": "gold"
-                            }
-                        })
-                        .to_string();
-                        let response_encoder = C00Response { json_response }.encode();
-                        self.clients[client].send_packet(response_encoder);
-                    }
+                    client.state = packet.next_state;
                 }
                 _ => Server::unknown_packet(decoder.packet_id),
             },
@@ -204,7 +185,7 @@ impl Server {
                     })
                     .to_string();
                     let response_encoder = C00Response { json_response }.encode();
-                    self.clients[client].send_packet(response_encoder);
+                    client.send_packet(&response_encoder);
                 }
                 0x01 => {
                     let packet = S01Ping::decode(decoder);
@@ -212,7 +193,7 @@ impl Server {
                         payload: packet.payload,
                     }
                     .encode();
-                    self.clients[client].send_packet(pong_encoder);
+                    client.send_packet(&pong_encoder);
                 }
                 _ => Server::unknown_packet(decoder.packet_id),
             },
@@ -229,9 +210,9 @@ impl Server {
                         verify_token: verify_token.clone(),
                     }
                     .encode();
-                    self.clients[client].verify_token = Some(verify_token);
-                    self.clients[client].username = Some(packet.name);
-                    self.clients[client].send_packet(request_encoder);
+                    client.verify_token = Some(verify_token);
+                    client.username = Some(packet.name);
+                    client.send_packet(&request_encoder);
                 }
                 0x01 => {
                     let packet = S01EncryptionResponse::decode(decoder);
@@ -246,8 +227,9 @@ impl Server {
                         )
                         .unwrap();
                     received_verify_token.drain(length_decrypted..received_verify_token.len());
-                    if &received_verify_token == self.clients[client].verify_token.as_ref().unwrap() {
+                    if &received_verify_token == client.verify_token.as_ref().unwrap() {
                         // Start login process
+                        println!("Starting login process");
                         /*self.mojang.send_has_joined(
                             &clients[client].username.unwrap(),
                             clients[client].id
@@ -276,7 +258,8 @@ impl Server {
                 .connection
                 .receive_packets();
             for packet_batch in packets.drain(..) {
-                for packet in PacketDecoder::newBatch(packet_batch, &self.clients[client]) {
+                for packet in PacketDecoder::new_batch(packet_batch, &self.clients[client]) {
+                    println!("{}", utils::to_hex_string(&packet.buffer));
                     self.handle_packet(client, packet.buffer);
                 }
             }
@@ -292,26 +275,32 @@ impl Server {
 
     fn poll_mojang(&mut self) { // TODO: Clean up maybe
         let mut finished_indicies = Vec::new();
-        for (i, pending) in self.mojang.hasJoinedPending.iter().enumerate() {
+        for (i, pending) in self.mojang.has_joined_pending.iter().enumerate() {
             if pending.result.is_some() {
                 finished_indicies.push(i);
             }
         }
         for index in finished_indicies {
-            let response = self.mojang.hasJoinedPending.remove(index);
-            self.on_mojang_has_joined_response(response.clientId, response.result.unwrap());
+            let response = self.mojang.has_joined_pending.remove(index);
+            self.on_mojang_has_joined_response(response.client_id, response.result.unwrap());
         }
         self.mojang.clean();
     }
 
     fn start(mut self) {
         println!("Listening for connections...");
+        //let mut last_tick_time = SystemTime::now();
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            yield_now();
+            /*let  now = SystemTime::now();
+            let time_since = now.duration_since(last_tick_time).unwrap().as_millis();
+            if time_since > 50 {
+                last_tick_time = now;
+            }
+            */
             self.receive_clients();
             self.receive_packets();
             self.poll_mojang();
+            thread::sleep(Duration::from_millis(1));
         }
     }
 }

@@ -42,18 +42,18 @@ enum RequestType {
 type ReqwestFuture = Pin<Box<dyn Future<Output = Result<Response, reqwest::Error>>>>;
 
 pub struct Pending<R> {
-    pub clientId: u32,
-    requestType: RequestType,
+    pub client_id: u32,
+    request_type: RequestType,
     future: ReqwestFuture,
     pub result: Option<R>,
 }
 
 impl<R> Pending<R> {
-    fn new(clientId: u32, future: ReqwestFuture, requestType: RequestType) -> Pending<R> {
+    fn new(client_id: u32, future: ReqwestFuture, request_type: RequestType) -> Pending<R> {
         Pending {
-            clientId,
+            client_id,
             future,
-            requestType,
+            request_type,
             result: None,
         }
     }
@@ -64,31 +64,31 @@ impl<R> Pending<R> {
 }
 
 pub struct Mojang {
-    reqClient: reqwest::Client,
-    pub hasJoinedPending: Vec<Pending<MojangHasJoinedResponse>>,
+    req_client: reqwest::Client,
+    pub has_joined_pending: Vec<Pending<MojangHasJoinedResponse>>,
 }
 
 impl Mojang {
     pub fn new() -> Self {
         Mojang {
-            reqClient: reqwest::Client::new(),
-            hasJoinedPending: Vec::new(),
+            req_client: reqwest::Client::new(),
+            has_joined_pending: Vec::new(),
         }
     }
 
-    pub fn send_has_joined(&mut self, username: &String, clientId: u32) {
+    pub fn send_has_joined(&mut self, username: &String, client_id: u32) {
         let url = format!(
             "https://sessionserver.mojang.com/session/minecraft/hasJoined?username={}&serverId={}",
             username,
             mc_hex_digest(&username)
         );
 
-        let future = self.reqClient.get(&url).send();
-        let pending = Pending::new(clientId, future.boxed(), RequestType::HasJoined);
-        self.hasJoinedPending.push(pending);
+        let future = self.req_client.get(&url).send();
+        let pending = Pending::new(client_id, future.boxed(), RequestType::HasJoined);
+        self.has_joined_pending.push(pending);
     }
 
     pub fn clean(&mut self) {
-        self.hasJoinedPending.retain(|p| p.result.is_some());
+        self.has_joined_pending.retain(|p| p.result.is_some());
     }
 }

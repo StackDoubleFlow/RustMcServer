@@ -34,7 +34,7 @@ pub struct PacketDecoder {
 }
 
 impl PacketDecoder {
-    pub fn newBatch(buffer: PacketBuffer, client: &Client) -> Vec<PacketDecoder> {
+    pub fn new_batch(buffer: PacketBuffer, client: &Client) -> Vec<PacketDecoder> {
         let mut decoders = Vec::new();
         let mut next = buffer;
         loop {
@@ -198,7 +198,7 @@ impl PacketEncoder {
         }
     }
 
-    pub fn finalize(self, compressed: bool, encryption_key: &Option<Vec<u8>>) -> Vec<u8> {
+    pub fn finalize(&self, compressed: bool, encryption_key: &Option<Vec<u8>>) -> Vec<u8> {
         let mut dummy_encoder = PacketEncoder::new(0);
         let mut out;
 
